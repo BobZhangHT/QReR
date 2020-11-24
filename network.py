@@ -373,12 +373,13 @@ class QRWG(BaseEstimator):
                     plt.show()
 
                 if val_ks < self.best_val_ks:
-                    print('Update Best Model.')
                     self.best_val_ks = val_ks
                     stop_cnt = 0
-                    torch.save(self.netG.state_dict(), self.save_folder+'checkpoint.pt')
                 else:
                     stop_cnt += 1
+                
+                print('Update Best Model.')
+                torch.save(self.netG.state_dict(), self.save_folder+'checkpoint.pt')
 
                 if stop_cnt >= self.patience:
                     print('Stop the Training.')
