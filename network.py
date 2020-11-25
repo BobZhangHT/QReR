@@ -146,6 +146,16 @@ class Generator(nn.Module):
         
         x = torch.cat([x1,x0],axis=1)
         return x
+
+def init_weights_uniform(m):  
+    if type(m) == nn.Linear:
+        torch.nn.init.uniform_(m.weight,-1,1)
+        m.bias.data.fill_(0)
+
+def init_weights_normal(m):
+    if type(m) == nn.Linear:
+        torch.nn.init.normal_(m.weight,0,np.sqrt(1/3))
+        m.bias.data.fill_(0)
     
 def QQLoss(output, target):
     '''
@@ -186,17 +196,27 @@ def MdiffLoss(output, target):
     The scalar is introduced to balance the maganitude between variance and mean component.
     output, target: mean difference matrix (nbatch, ncovariate)
     '''
+    def cov_mat_cpt(tmp):
+        tmp_cen = tmp - tmp.mean(axis=0).reshape(-1,tmp.shape[1])
+        cov_mat = tmp_cen.t().matmul(tmp_cen)/(tmp_cen.shape[0]-1)
+        return cov_mat
+
     mean_target = target.mean(axis=0)
-    std_target = target.std(axis=0)
+    #std_target = target.std(axis=0)
+    cov_target = cov_mat_cpt(target)
 
     mean_output = output.mean(axis=0)
-    std_output = output.std(axis=0)
+    #std_output = output.std(axis=0)
+    cov_output = cov_mat_cpt(output)
 
     mean_loss = torch.sum((mean_output-mean_target)**2)
-    var_loss = torch.sum((torch.log(std_target)-torch.log(std_output))**2)
+    #var_loss = torch.sum((torch.log(std_target)-torch.log(std_output))**2)
+    #var_loss = torch.linalg.norm(torch.inverse(cov_target).matmul(cov_output)-torch.eye(cov_output.shape[0]),ord='fro')
+    I_mat = torch.eye(cov_target.shape[0])
+    var_loss = torch.sum((torch.inverse(cov_output).matmul(cov_target)-I_mat)**2)
 
     scalar = var_loss.item()/mean_loss.item()
-    return 2*scalar*mean_loss + var_loss
+    return scalar*mean_loss + var_loss
 
 def KS(output, target):
     '''
@@ -229,6 +249,7 @@ class QRWG(BaseEstimator):
                  random_state=0,
                  save_folder='./save/',
                  # parameters of network
+                 init_method='uniform',
                  num_nodes=64, ngpu=0, device='cpu'):
         
         self.lr = lr
@@ -241,6 +262,7 @@ class QRWG(BaseEstimator):
         self.save_folder = save_folder
         
         self.num_nodes = num_nodes # number of hidden nodes
+        self.init_method = init_method
         self.ngpu = ngpu
         self.device = device
     
@@ -291,6 +313,11 @@ class QRWG(BaseEstimator):
         # network 
         self.netG = Generator(w=self.w, nwts=self.nwts, 
                          ngen=self.num_nodes, ngpu=self.ngpu).to(self.device)
+        
+        if self.init_method == 'normal':
+            self.netG.apply(init_weights_normal)
+        elif self.init_method == 'uniform':
+            self.netG.apply(init_weights_uniform)
      
         # setup adam optimizers
         optimizer = optim.Adam(self.netG.parameters(), lr=self.lr)
@@ -352,7 +379,7 @@ class QRWG(BaseEstimator):
             # backward propagation
             qqloss = QQLoss(fake_dist, real_dist)
             mdiffloss = MdiffLoss(fake_mdiff, real_mdiff)
-            errG = 0.5*qqloss + mdiffloss
+            errG = qqloss + mdiffloss
             ksG = KS(fake_dist, real_dist)
             errG.backward()
             optimizer.step()
@@ -394,12 +421,14 @@ class QRWG(BaseEstimator):
 
                 if val_ks < self.best_val_ks:
                     self.best_val_ks = val_ks
+                    print('Update Model.')
+                    torch.save(self.netG.state_dict(), self.save_folder+'checkpoint.pt')
                     stop_cnt = 0
                 else:
                     stop_cnt += 1
                 
-                print('Update Model.')
-                torch.save(self.netG.state_dict(), self.save_folder+'checkpoint.pt')
+                # print('Update Model.')
+                # torch.save(self.netG.state_dict(), self.save_folder+'checkpoint.pt')
 
                 if stop_cnt >= self.patience:
                     print('Stop the Training.')
