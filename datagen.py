@@ -57,3 +57,18 @@ def tau_diff(y,w,wts=None):
     tauhat = ybar1 - ybar0
 
     return tauhat
+
+
+def cov_mdiff(x,w,wts=None):
+    if wts is None:
+        wts = np.ones(x.shape[0])
+    
+    n1 = (w*wts).sum()
+    n0 = ((1-w)*wts).sum()
+
+    # weigthed mean for each treatment
+    xbar1 = (x[w==1,:].T*wts[w==1]).sum(axis=1)/n1
+    xbar0 = (x[w==0,:].T*wts[w==0]).sum(axis=1)/n0
+    delta = xbar1 - xbar0
+
+    return delta

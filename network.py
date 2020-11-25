@@ -22,6 +22,10 @@ def ReR(pa,x):
     x: data matrix
     '''
     
+    # transform the format
+    if isinstance(x,torch.Tensor):
+        x = x.numpy()
+
     n,d = x.shape
     a = sp.chi2.ppf(pa,df=d)
 
@@ -44,6 +48,14 @@ def maha_dist(x,w,wts=None):
 
     if wts is None:
         wts = torch.ones(x.shape[0])
+    elif isinstance(wts,np.ndarray):
+        wts = torch.Tensor(wts)
+
+    if isinstance(w,np.ndarray):
+        w = torch.Tensor(w)
+
+    if isinstance(x,np.ndarray):
+        x = torch.Tensor(x)
     
     if len(wts.shape)==1:
         n1 = (w*wts).sum()
