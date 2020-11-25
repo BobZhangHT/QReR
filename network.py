@@ -192,8 +192,8 @@ def MdiffLoss(output, target):
     mean_output = output.mean(axis=0)
     std_output = output.std(axis=0)
 
-    mean_loss = torch.sum((mean_output-mean_target)**2)#.abs())
-    var_loss = torch.sum((torch.log(std_target)-torch.log(std_output))**2)#.abs())
+    mean_loss = torch.sum((mean_output-mean_target)**2)
+    var_loss = torch.sum((torch.log(std_target)-torch.log(std_output))**2)
 
     scalar = var_loss.item()/mean_loss.item()
     return 2*scalar*mean_loss + var_loss
@@ -319,6 +319,8 @@ class QRWG(BaseEstimator):
         
         # begin training
         self.losses = []
+        self.qqlosses = []
+        self.mdifflosses = []
         self.ks_list = []
         self.val_ks_list = []
         self.x_mdiff_list = []
@@ -332,7 +334,7 @@ class QRWG(BaseEstimator):
             self.netG.zero_grad()
             # generate real data
             real_idx = np.random.choice(num_rer,self.batch_size)
-            real_dist = torch.Tensor(self.mdist_rer_vec[real_idx]).reshape(-1,1)
+            real_dist = torch.Tensor(self.mdist_rer_vec[real_idx])
             real_dist = torch.log(real_dist) # take log to accelerate the convergence
             real_mdiff = torch.Tensor(self.x_mdiff_rer[real_idx])
 
@@ -347,23 +349,29 @@ class QRWG(BaseEstimator):
             fake_mdiff = Mdiff_wts(x,w,gen_wts*(self.nt+self.nc)/2)
             fake_dist = torch.log(maha_dist(x,w,gen_wts*(self.nt+self.nc)/2))
 
-            # generate the output
-            errG = QQLoss(fake_dist, real_dist) + MdiffLoss(fake_mdiff, real_mdiff)
+            # backward propagation
+            qqloss = QQLoss(fake_dist, real_dist)
+            mdiffloss = MdiffLoss(fake_mdiff, real_mdiff)
+            errG = 0.5*qqloss + mdiffloss
             ksG = KS(fake_dist, real_dist)
             errG.backward()
             optimizer.step()
 
-            # Save Losses & KS for plotting later
+            # save Losses & KS for plotting later
             self.losses.append(errG.item())
+            self.qqlosses.append(qqloss.item())
+            self.mdifflosses.append(mdiffloss.item())
             self.ks_list.append(ksG.item())
             self.x_mdiff_list.append(fake_mdiff.mean(axis=0).abs().mean().item())
 
             
             if self.verbose is True:
                 if (iteration+1) % 10 == 0:
-                      print('[%d/%d]\tLoss: %.4f\tKS: %.4f\tMdiff_Avg: %.4f'
+                      print('[%d/%d]\tTotal Loss: %.4f\tMdiffLoss: %.4f\tQQLoss: %.4f\tKS: %.4f\tMdiff_Avg: %.4f\t'
                             % (iteration+1, self.num_iters, 
                                errG.item(),
+                               mdiffloss.item(),
+                               qqloss.item(),
                                ksG.item(),
                                fake_mdiff.mean(axis=0).abs().mean().item()))
 
@@ -390,7 +398,7 @@ class QRWG(BaseEstimator):
                 else:
                     stop_cnt += 1
                 
-                print('Update Best Model.')
+                print('Update Model.')
                 torch.save(self.netG.state_dict(), self.save_folder+'checkpoint.pt')
 
                 if stop_cnt >= self.patience:
