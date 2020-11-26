@@ -292,6 +292,48 @@ class QRWG(BaseEstimator):
             return x
         else:
             raise TypeError('The instance should be either numpy.ndarray or torch.Tensor, but get {}'.format(type(x)))
+
+    def _init_data(self,x,w_rer_mat=None,
+            mdist_rer_vec=None,
+            num_fixed_noise=1000,
+            num_rer=5000):
+
+        # generate some fixed noise for evaluation
+        self.fixed_noise = self._noise_gen(num_fixed_noise)
+        
+        # generate fixed real mdist for evaluation
+        self.real_fixed_mdist = torch.Tensor([ReR(self.pa,x)[1] for i in range(num_fixed_noise)])
+        
+        # generate the randomized allocations with mahalanobis distance if they are not provided
+        if (w_rer_mat is None) or (mdist_rer_vec is None):
+            self.w_rer_mat = []
+            self.mdist_rer_vec = []
+            for i in range(num_rer):
+                w_rer, mdist = ReR(self.pa,x)
+                self.mdist_rer_vec.append(mdist)
+                self.w_rer_mat.append(w_rer.reshape(-1,1))
+        
+        # mean difference matrix for covariate
+        self.mdist_rer_vec = torch.Tensor(self.mdist_rer_vec)
+        self.w_rer_mat = torch.cat(self.w_rer_mat,axis=1).t().float()
+        x1_mat = self.w_rer_mat.matmul(x)/self.w_rer_mat.sum(axis=1).reshape(-1,1)
+        x0_mat = (1-self.w_rer_mat).matmul(x)/((1-self.w_rer_mat).sum(axis=1).reshape(-1,1))
+        self.x_mdiff_rer = x1_mat - x0_mat
+
+
+    def _init_network(self):
+        # network 
+        self.netG = Generator(w=self.w, nwts=self.nwts, 
+                         ngen=self.num_nodes, ngpu=self.ngpu).to(self.device)
+
+        if self.init_method == 'normal':
+            self.netG.apply(init_weights_normal)
+        elif self.init_method == 'uniform':
+            self.netG.apply(init_weights_uniform)
+     
+        # setup adam optimizers
+        self.optimizer = optim.Adam(self.netG.parameters(), lr=self.lr)
+
         
     def fit(self,x,w,
             w_rer_mat=None,
@@ -310,39 +352,11 @@ class QRWG(BaseEstimator):
         np.random.seed(self.random_state)
         torch.manual_seed(self.random_state)
         
-        # network 
-        self.netG = Generator(w=self.w, nwts=self.nwts, 
-                         ngen=self.num_nodes, ngpu=self.ngpu).to(self.device)
-        
-        if self.init_method == 'normal':
-            self.netG.apply(init_weights_normal)
-        elif self.init_method == 'uniform':
-            self.netG.apply(init_weights_uniform)
-     
-        # setup adam optimizers
-        optimizer = optim.Adam(self.netG.parameters(), lr=self.lr)
-        
-        # generate some fixed noise for evaluation
-        self.fixed_noise = self._noise_gen(num_fixed_noise)
-        
-        # generate fixed real mdist for evaluation
-        real_fixed_mdist = torch.Tensor([ReR(self.pa,x)[1] for i in range(num_fixed_noise)])
-        
-        # generate the randomized allocations with mahalanobis distance if they are not provided
-        if (w_rer_mat is None) or (mdist_rer_vec is None):
-            self.w_rer_mat = []
-            self.mdist_rer_vec = []
-            for i in range(num_rer):
-                w_rer, mdist = ReR(self.pa,x)
-                self.mdist_rer_vec.append(mdist)
-                self.w_rer_mat.append(w_rer.reshape(-1,1))
-        
-        # mean difference matrix for covariate
-        self.mdist_rer_vec = torch.Tensor(self.mdist_rer_vec)
-        self.w_rer_mat = torch.cat(self.w_rer_mat,axis=1).t().float()
-        x1_mat = self.w_rer_mat.matmul(x)/self.w_rer_mat.sum(axis=1).reshape(-1,1)
-        x0_mat = (1-self.w_rer_mat).matmul(x)/((1-self.w_rer_mat).sum(axis=1).reshape(-1,1))
-        self.x_mdiff_rer = x1_mat - x0_mat
+        # data initialization
+        self._init_data(x,w_rer_mat,mdist_rer_vec,num_fixed_noise,num_rer)
+
+        # network initialization
+        self._init_network()
         
         # begin training
         self.losses = []
@@ -382,7 +396,7 @@ class QRWG(BaseEstimator):
             errG = qqloss + mdiffloss
             ksG = KS(fake_dist, real_dist)
             errG.backward()
-            optimizer.step()
+            self.optimizer.step()
 
             # save Losses & KS for plotting later
             self.losses.append(errG.item())
@@ -407,13 +421,13 @@ class QRWG(BaseEstimator):
                 fake_fixed_mdist = maha_dist(x,w,wts_mat_net)
 
                 # save the validation ks score
-                val_ks = KS(fake_fixed_mdist,real_fixed_mdist).item()
+                val_ks = KS(fake_fixed_mdist,self.real_fixed_mdist).item()
                 self.val_ks_list.append(val_ks)
                 
                 if self.verbose is True:
                     # show the distribution
                     plt.figure()
-                    sb.distplot(real_fixed_mdist,label='True')
+                    sb.distplot(self.real_fixed_mdist,label='True')
                     sb.distplot(fake_fixed_mdist,label='Generated')
                     plt.legend()
                     plt.title('KS: '+str(np.round(val_ks,4)))
@@ -422,7 +436,7 @@ class QRWG(BaseEstimator):
                 if val_ks < self.best_val_ks:
                     self.best_val_ks = val_ks
                     print('Update Model.')
-                    torch.save(self.netG.state_dict(), self.save_folder+'checkpoint.pt')
+                    torch.save(self.netG.state_dict(), self.save_folder+'best_checkpoint.pt')
                     stop_cnt = 0
                 else:
                     stop_cnt += 1
@@ -430,11 +444,18 @@ class QRWG(BaseEstimator):
                 # print('Update Model.')
                 # torch.save(self.netG.state_dict(), self.save_folder+'checkpoint.pt')
 
-                if stop_cnt >= self.patience:
-                    print('Stop the Training.')
-                    self.netG.load_state_dict(torch.load(self.save_folder+'checkpoint.pt'))
-                    break
-        return self
+            if stop_cnt >= self.patience:
+                print('Early Stop the Training.')
+                torch.save(self.netG.state_dict(), self.save_folder+'final_checkpoint.pt')
+                self.netG.load_state_dict(torch.load(self.save_folder+'best_checkpoint.pt'))
+                break
+
+        if stop_cnt >= self.patience:
+            return self
+        else:
+            print('Training Complete.')
+            torch.save(self.netG.state_dict(), self.save_folder+'final_checkpoint.pt')
+            return self
     
     def predict(self,num_noise=1000):
         
