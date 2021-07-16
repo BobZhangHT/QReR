@@ -13,14 +13,13 @@ import matplotlib.pyplot as plt
 import seaborn as sb
 
 
-def x_gen(nt=250,r=2):
+def x_gen(nt=250,r=2,mu=[.2,.2,.5,.5],cov_mat=np.eye(4)):
     nc = int(r*nt)
-    mu = [.2,.2,.5,.5]
     z = np.concatenate([np.ones(nt),np.zeros(nc)])
     
     X = np.zeros((nt+nc,8))
     X[z==0,:4] = np.random.normal(size=(nc,4))
-    X[z==1,:4] = np.random.multivariate_normal(mean=mu,cov=np.eye(4),size=(nt))
+    X[z==1,:4] = np.random.multivariate_normal(mean=mu,cov=cov_mat,size=(nt))
     X[:,4] = np.random.binomial(1,0.1+0.068*z,size=(nt+nc))
     X[:,5] = np.random.binomial(1,0.1+0.068*z,size=(nt+nc))
     X[:,6] = np.random.binomial(1,0.4+0.242*z,size=(nt+nc))
@@ -28,13 +27,28 @@ def x_gen(nt=250,r=2):
 
     return X,z
 
+# def y_gen(X,z,tau=1,err_std=1):
+#     nt = int(z.sum())
+#     nc = int((1-z).sum())
+
+#     f1 = 3.5*X[:,0]+4.5*X[:,2]+1.5*X[:,4]+2.5*X[:,6]
+#     #f2 = f1 + 2.5*np.sign(X[:,0])*np.sqrt(np.abs(X[:,0]))+5.5*X[:,2]**2
+#     f2 = f1 + 2.5*np.sign(X[:,0])*np.sqrt(np.abs(X[:,0]))+5.5*X[:,2]**2
+#     f3 = f2 + 2.5*X[:,2]*X[:,6]-4.5*np.abs(X[:,0]*X[:,2]**3)
+
+#     y1 = f1 + tau*z + err_std*np.random.normal(size=(nt+nc,))
+#     y2 = f2 + tau*z + err_std*np.random.normal(size=(nt+nc,))
+#     y3 = f3 + tau*z + err_std*np.random.normal(size=(nt+nc,))
+
+#     return y1, y2, y3
+
 def y_gen(X,z,tau=1,err_std=1):
     nt = int(z.sum())
     nc = int((1-z).sum())
 
     f1 = 3.5*X[:,0]+4.5*X[:,2]+1.5*X[:,4]+2.5*X[:,6]
-    f2 = f1 + 2.5*np.sign(X[:,0])*np.sqrt(abs(X[:,0]))+5.5*X[:,2]**2
-    f3 = f2 + 2.5*X[:,2]*X[:,6]-4.5*np.abs(X[:,0]*X[:,2]**3)
+    f2 = f1 + 2.5*np.sign(X[:,0])*np.sqrt(np.abs(X[:,0]))+2.5*X[:,2]*X[:,6]
+    f3 = f2 + 5.5*X[:,2]**2-4.5*X[:,0]*X[:,2]**3
 
     y1 = f1 + tau*z + err_std*np.random.normal(size=(nt+nc,))
     y2 = f2 + tau*z + err_std*np.random.normal(size=(nt+nc,))
