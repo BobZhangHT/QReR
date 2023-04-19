@@ -18,4 +18,6 @@ The running codes for "Quasi-Rerandomization for Observational Studies".
 
 ## Real Datasets (IHDP):
 
-The real datasets (IHDP-100 (train), IHDP-100 (test)) can be found in folder `realdata`, which are downloaded from https://www.fredjo.com/.
+- The real datasets (IHDP-100 (train), IHDP-100 (test)) can be found in folder `realdata`, which are downloaded from https://www.fredjo.com/.
+- The data descriptions can be found at Section 5.1 of the paper ["Estimating individual treatment effect: generalization bounds and algorithms"](http://arxiv.org/abs/1606.03976).
+
