@@ -20,73 +20,6 @@ from tqdm import tqdm
 
 from datagen import tau_diff
 
-# import rpy2
-# from rpy2 import robjects as ro
-# from rpy2.robjects import Formula
-# from rpy2.robjects.packages import importr
-# from rpy2.robjects import numpy2ri, pandas2ri
-
-# numpy2ri.activate()
-# pandas2ri.activate()
-
-def ri_ci(y,z,tau_obs,z_rer_mat,
-          ci_level=0.05,
-          tau_min=-10,
-          tau_max=10,
-          search_step=0.01):
-    '''
-    This function performs randomization based inference (for finite population):
-    y: response vector, (n,)
-    z: allocation vector, (n,)
-    tau_obs: estimation of treatment effect based on observed data, float
-    z_rer_mat: matrix of M rerandomization allocation vectors, (M,n)
-    ci_level: nominal level, float
-    tau_min, tau_max: determine the range of tau sequence; the searching interval is (tau+tau_min,tau+tau_max), float
-    search_step: the step length for the grid search, float
-    '''
-
-    pvals = []
-    tau_seq = np.arange(tau_min+tau_obs,tau_max+tau_obs,search_step)
-    
-    for tau_ in tqdm(tau_seq):
-        y_mat = (y).reshape(1,-1)+(z_rer_mat - z.reshape(1,-1))*tau_
-        ybar1 = (y_mat*z_rer_mat).sum(axis=1)/z_rer_mat.sum(axis=1)
-        ybar0 = (y_mat*(1-z_rer_mat)).sum(axis=1)/(1-z_rer_mat).sum(axis=1)
-        tauhat_seq = ybar1-ybar0
-        pval = (np.sum(np.abs(tauhat_seq-tau_).flatten()>=np.abs(tau_obs-tau_)) + 1)/(tauhat_seq.shape[0]+1)
-        pvals.append(pval)
-        
-    pvals = np.array(pvals)
-    lb = (tau_seq[pvals>=ci_level]).min()
-    ub = (tau_seq[pvals>=ci_level]).max()
-    
-    return lb, ub
-
-# def sp_infer(y,z,wts):
-#     '''
-#     This function performance inference based on weighted regression (for super-population):
-#     y: response vector, (n,)
-#     z: allocation vector, (n,)
-#     wts: sample weights vector, (n,)
-#     '''
-    
-#     # the following codes are modified from the inference method of WeightIt
-#     # https://ngreifer.github.io/WeightIt/articles/WeightIt.html
-#     survey = importr('survey')
-    
-#     design = survey.svydesign(ids=Formula('~1'),
-#                      weights=wts,
-#                      data=pd.DataFrame(np.hstack([y.reshape(-1,1), z.reshape(-1,1)]),columns=['y','z']))
-#     fit = survey.svyglm(Formula('y~z'), design = design)
-#     summary_fit = survey.summary_svyglm(fit)[12]
-    
-#     est = summary_fit[1,0]
-#     se = summary_fit[1,1]
-    
-#     lb = est - 1.96*se
-#     ub = est + 1.96*se
-    
-#     return est, lb, ub
 
 def ReR(pa,x,nt=None):
     '''
@@ -166,7 +99,7 @@ def maha_dist(x,w,wts=None,return_cov=False):
     elif len(wts.shape)==2: # use tensor method (for network)
         wts_mat = wts
         
-        # tenorized mahalanobis distance w.r.t wts
+        # tensorized mahalanobis distance w.r.t wts
 
         # vector of effective sample size
         n1_vec = wts_mat.matmul(w)
@@ -317,7 +250,7 @@ def KS(output, target):
     cdf1 = torch.searchsorted(data1, data_all, right=True) / n1
     cdf2 = torch.searchsorted(data2, data_all, right=True) / n2
     cddiffs = cdf1 - cdf2
-    minS = torch.clip(-torch.min(cddiffs), 0, 1)  # Ensure sign of minS is not negative.
+    minS = torch.clip(-torch.min(cddiffs), 0, 1)  # ensure sign of minS is not negative.
     maxS = torch.max(cddiffs)
     return torch.max(minS, maxS)
 
@@ -366,7 +299,7 @@ def MMDLoss(x_input,y_input,
     return loss.sqrt()
 
 
-class QRWG(BaseEstimator):
+class QReR(BaseEstimator):
     '''
     A scikit-learn wrapper of our proposed method.
     '''
@@ -638,12 +571,6 @@ class QRWG(BaseEstimator):
                 # save the validation loss
                 fake_fixed_mdiff, fake_fixed_xbar1_mat, fake_fixed_xbar0_mat = Mdiff_wts(x,w,wts_mat_net, return_xmat=True)
                 
-#                 val_wt_reg_term = torch.sum((wts_mat_net[:,:self.nt]/self.nt-1/self.nt)**2,axis=1).mean() + \
-#                             torch.sum((wts_mat_net[:,self.nt:]/self.nc-1/self.nc)**2,axis=1).mean()
-                
-#                 val_x_reg_term = torch.sum((fake_fixed_xbar1_mat - self.xbar)**2,axis=1).mean() + \
-#                                  torch.sum((fake_fixed_xbar0_mat - self.xbar)**2,axis=1).mean()
-                
                 # no penalty is required during validation
                 # https://www.pyimagesearch.com/2019/10/14/why-is-my-validation-loss-lower-than-my-training-loss/ 
                 val_loss = MMDLoss(fake_fixed_mdiff,self.real_fixed_mdiff,**self.kernel_params)
@@ -665,15 +592,16 @@ class QRWG(BaseEstimator):
                                self.kernel_params['gamma'].item()))
                     
                     # show the distribution
-                    fig,axes = plt.subplots(1,2,figsize=(9,4))
+                    # fig,axes = plt.subplots(1,2,figsize=(9,4))
+                    plt.figure(figsize=(9,4))
                     
-                    plt.subplot(axes[0])
+                    plt.subplot(121)
                     sb.distplot(self.real_fixed_mdist,label='True')
                     sb.distplot(fake_fixed_mdist,label='Generated')
                     plt.legend()
                     plt.title('KS: '+str(np.round(val_ks,4)))
                     
-                    plt.subplot(axes[1])
+                    plt.subplot(122)
                     plt.plot(self.val_losses,label='Validation')
                     #plt.xlabel('Iteration')
                     plt.ylabel('Loss')
@@ -690,8 +618,6 @@ class QRWG(BaseEstimator):
 
                     if val_metric_ < self.best_val_metric:
                         self.best_val_metric = val_metric_
-#                         print('Update Model.')
-#                         torch.save(self.netG.state_dict(), self.save_folder+'best_checkpoint.pt')
                         stop_cnt = 0
                     else:
                         stop_cnt += 1
